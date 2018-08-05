@@ -1,41 +1,82 @@
+# This script is a modified form of tuxity's betaseries-to-trakt script, found at
+# https://github.com/tuxity/betaseries-to-trakt
+#
+# The following implementation is meant to work with custom data (not from Betaseries)
+# and also add specific watch dates for history of movies
+
+import csv
+import json
 import os
+import re
+import requests
 import sys
 
-# placeholder
+# User must run script after configuring the following fields
+# PIN can be retrieved at below URI, replacing ________ with individual Client ID from an API application
+# https://trakt.tv/oauth/authorize?response_type=code&client_id=________&redirect_uri=urn:ietf:wg:oauth:2.0:oob
 
-"""
-movies csv from betaseries
-where status 0=want to see, 1=saw
+clientid = ""
+clientsecret = ""
+onetimepin = ""
 
-id,tmdb_id,title,status,date
-1158,57586,"African Cats",0,
-5432,13678,"Le dernier trappeur",0,
+# First setup headers with identity and authorization
 
-trakt api says
+session = requests.Session()
 
-"movies": [
-    {
-      "watched_at": "2014-09-01T09:10:11.000Z",
-      "title": "Batman Begins",
-      "year": 2005,
-      "ids": {
-        "trakt": 1,
-        "slug": "batman-begins-2005",
-        "imdb": "tt0372784",
-        "tmdb": 272
-      }
-    },
-  ]
+session.headers.update({
+    "Accept":     "application/json",
+    "User-Agent": "CSV Watched History",
+    "Connection": "Keep-Alive"
+})
 
-"""
+post_data = {
+    "code":          onetimepin,
+    "client_id":     clientid,
+    "client_secret": clientsecret,
+    "redirect_uri":  "urn:ietf:wg:oauth:2.0:oob", # ???
+    "grant_type":    "authorization_code"
+}
 
-"""
+# Can comment out after first request, when access token has been granted
+request = session.post("https://api.trakt.tv/oauth/token", data=post_data)
+response = request.json()
+print("Access token: " + response["access_token"])
 
-tv format from betaseries
+session.headers.update({
+    "Content-Type":      "application/json",
+    "trakt-api-version": "2",
+    "trakt-api-key":     clientid,
+    "Authorization":     "Bearer " + response["access_token"] # Replace with access token for multiple requests
+})
 
-id,thetvdb_id,title,archive,episode,remaining,status,tags
-894,110381,"Archer (2009)",0,S06E07,34,66.34,
-7719,273181,"Better Call Saul",0,S01E05,26,16.13,
-830,80977,"Fais pas ci, fais pas ﾃｧa",0,S06E07,68,1.45,
+# Construct a dictionary to hold an array of movie objects, populated from the imported csv
 
-"""
+historydata = {
+        "movies": []
+    }
+
+f = open("imp.csv", "r")
+c = csv.reader(f)
+for row in c:
+    movie = {
+        "watched_at": row[1],
+        "title": row[0],
+        "ids": {
+            "tmdb": int(row[2])
+        }
+    }
+    historydata["movies"].append(movie)
+
+f.close()
+
+# Output post data and response for confirmation in case of issue. Then send HTTP POST and check if success.
+print("Movies to be added:")
+print(historydata)
+request_history = session.post("https://api.trakt.tv/sync/history", data=json.dumps(historydata))
+print("Server response: " + request_history.text)
+response_history = request_history.json()
+
+if int(request_history.status_code) == 500:
+    print("HTTP 500 error. Exiting")
+else:
+    print("Script done. Added " + str(response_history['added']['movies']) + " movies.")
